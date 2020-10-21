@@ -1,0 +1,123 @@
+// Variables used by Scriptable.
+// These must be at the very top of the file. Do not edit.
+// icon-color: deep-gray; icon-glyph: magic;
+// Licence: Robert Koch-Institut (RKI), dl-de/by-2-0
+const apiUrl = (location) => `https://services7.arcgis.com/mOBPykOjAyBO2ZKk/arcgis/rest/services/RKI_Landkreisdaten/FeatureServer/0/query?where=1%3D1&outFields=BL,cases,cases7_per_100k,cases7_bl_per_100k,GEN,county,last_update&geometry=${location.longitude.toFixed(3)}%2C${location.latitude.toFixed(3)}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelWithin&returnGeometry=false&outSR=4326&f=json`
+
+const INCIDENCE_CRITICAL = 50;
+const INCIDENCE_WARN = 35;
+
+const BUNDESLAENDER_SHORT = {
+  'Baden-Württemberg': 'BW',
+  'Bayern': 'BY',
+  'Berlin': 'BE',
+  'Brandenburg': 'BB',
+  'Bremen': 'HB',
+  'Hamburg': 'HH',
+  'Hessen': 'HE',
+  'Mecklenburg-Vorpommern': 'MV',
+  'Niedersachsen': 'NI',
+  'Nordrhein-Westfalen': 'NRW',
+  'Rheinland-Pfalz': 'RLP',
+  'Saarland': 'SL',
+  'Sachsen': 'SN',
+  'Sachsen-Anhalt': 'ST',
+  'Schleswig-Holstein': 'SH',
+  'Thüringen': 'TH'
+}
+
+const getIncidenceColor = (incidence) => {
+    if (incidence >= INCIDENCE_CRITICAL) {
+        return Color.red()
+    } else if (incidence >= INCIDENCE_WARN) {
+        return Color.orange()
+    } else {
+        return Color.green()
+    }
+}
+
+let widget = await createWidget()
+
+if (!config.runsInWidget) {
+    await widget.presentLarge()
+}
+
+Script.setWidget(widget)
+Script.complete()
+
+async function createWidget(items) {
+    let location = {}
+    let customLandkreisName
+
+    if (args.widgetParameter) {
+        const params = args.widgetParameter.split(",")
+        location = {
+            latitude: parseFloat(params[0]),
+            longitude: parseFloat(params[1])
+        }
+        customLandkreisName = params[2]
+
+    } else {
+        Location.setAccuracyToThreeKilometers()
+        location = await Location.current()
+    }
+
+    const data = await new Request(apiUrl(location)).loadJSON()
+
+    if (!data || !data.features || !data.features.length) {
+        const errorList = new ListWidget()
+        errorList.addText("Keine Ergebnisse für den aktuellen Ort gefunden.")
+        return errorList
+    }
+
+    const attributes = data.features[0].attributes
+    const lastUpdated = attributes.last_update
+    const incidenceLandkreis = attributes.cases7_per_100k.toFixed(1)
+    const incidenceBundesland = attributes.cases7_bl_per_100k.toFixed(1)
+    const casesLandkreis = attributes.cases
+    const bundeslandName = BUNDESLAENDER_SHORT[attributes.BL]
+    const landkreisBezeichnung = attributes.county
+    const isKreisfreieStadt = !!landkreisBezeichnung.match(/^SK \w+$/)
+    const landkreisName = customLandkreisName || attributes.GEN
+    
+    const list = new ListWidget()
+
+    const header = list.addText(`🦠 INZIDENZ`)
+    header.font = Font.mediumSystemFont(13)
+
+    list.addSpacer()
+    
+    const mainContent = list.addStack()
+    mainContent.layoutHorizontally()
+    mainContent.useDefaultPadding()
+    mainContent.centerAlignContent()
+
+    const incidenceLabel = mainContent.addText(`${incidenceLandkreis}`)
+    incidenceLabel.font = Font.boldSystemFont(24)
+    incidenceLabel.textColor = getIncidenceColor(incidenceLandkreis)
+    const casesLandkreisLabel = mainContent.addText(` (${casesLandkreis})`)
+    casesLandkreisLabel.font = Font.systemFont(14)
+    casesLandkreisLabel.textColor = Color.gray()
+    
+    list.addText(landkreisName)
+  
+    if (isKreisfreieStadt) {
+      list.addText('(Stadt)')
+    }
+    list.addSpacer()
+
+    const line = list.addStack()
+    line.layoutHorizontally()
+    line.useDefaultPadding()
+    const bl_incidence = line.addText(`${incidenceBundesland}`)
+    bl_incidence.font = Font.boldSystemFont(14)
+    bl_incidence.textColor = getIncidenceColor(incidenceBundesland)
+    const bundeslandLabel = line.addText(` ${bundeslandName}`)
+    bundeslandLabel.font = Font.systemFont(14)
+    bundeslandLabel.textColor = Color.gray()
+    const updateLabel = list.addText(`Stand: ${lastUpdated.substr(0,10)}`)
+    updateLabel.font = Font.systemFont(10)
+    updateLabel.textColor = Color.gray()
+
+    return list
+}
